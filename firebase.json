@@ -1,0 +1,29 @@
+{
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ]
+    }
+  ],
+  "hosting": {
+    "public": "public",
+    "headers": [
+      {
+        "source": "**", 
+        "headers": [
+          {
+            "key": "Set-Cookie", 
+            "value": "_ga_TC7Z7CDT2G=value; Domain=royale-play-casino.web.app; Path=/; Secure; SameSite=None; Expires=Tue, 19 Jan 2038 03:14:07 GMT"
+          }
+        ]
+      }
+    ]
+  }
+}
