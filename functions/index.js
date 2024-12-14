@@ -205,115 +205,128 @@ try {
 exports.verifyDeposit = functions.https.onRequest((req, res) => {
     // Enable CORS first
     cors(req, res, async () => {
-      const { userId, amount, requestedAt:depositRequestedAt } = req.body; // Assuming the data is sent via a POST request
-  
+        const { userId, amount, requestedAt: depositRequestedAt } = req.body; // Assuming the data is sent via a POST request
+
         try {
             const userRef = db.collection("users").doc(userId);
-            const userDoc = await userRef.get();
-    
-            if (!userDoc.exists) {
-            return res.status(404).send({ error: "User not found" });
-            }
-    
-            const userData = userDoc.data();
-            const historyToVerify = userData.balanceHistory.find(
-            (history) =>
-                history.requestedAt.seconds === depositRequestedAt.seconds &&
-                history.requestedAt.nanoseconds === depositRequestedAt.nanoseconds &&
-                history.type === 'deposit' && // Ensure it's a withdraw request
-                !history.verified // Ensure it's unverified
-            );
-    
-            if (!historyToVerify) {
-            return res.status(404).send({ error: "Balance history entry not found" });
-            }
-    
-            // Update balance
-            await userRef.update({
-            balance: admin.firestore.FieldValue.increment(amount),
-            });
-            const requestedAt = admin.firestore.Timestamp.now();
-    
-            // Update balance history
-            const updatedBalanceHistory = userData.balanceHistory.map((history) =>
-            history.requestedAt.seconds === depositRequestedAt.seconds &&
-            history.requestedAt.nanoseconds === depositRequestedAt.nanoseconds
-                ? { ...history, requestedAt,  verified: true }
-                : history
-            );
 
-    
-            await userRef.update({
-            balanceHistory: updatedBalanceHistory,
+            // Use Firestore transaction to ensure atomic update of balance and balanceHistory
+            await db.runTransaction(async (transaction) => {
+                const userDoc = await transaction.get(userRef);
+
+                if (!userDoc.exists) {
+                    throw new Error("User not found");
+                }
+
+                const userData = userDoc.data();
+
+                // Find the deposit entry in the balance history
+                const historyToVerify = userData.balanceHistory.find(
+                    (history) =>
+                        history.requestedAt.seconds === depositRequestedAt.seconds &&
+                        history.requestedAt.nanoseconds === depositRequestedAt.nanoseconds &&
+                        history.type === 'deposit' && // Ensure it's a deposit request
+                        !history.verified // Ensure it's unverified
+                );
+
+                if (!historyToVerify) {
+                    throw new Error("Balance history entry not found or already verified");
+                }
+
+                // Update balance
+                transaction.update(userRef, {
+                    balance: admin.firestore.FieldValue.increment(amount)
+                });
+
+                const verifiedAt = admin.firestore.Timestamp.now();
+
+                // Update balance history
+                const updatedBalanceHistory = userData.balanceHistory.map((history) =>
+                    history.requestedAt.seconds === depositRequestedAt.seconds &&
+                    history.requestedAt.nanoseconds === depositRequestedAt.nanoseconds
+                        ? { ...history, verifiedAt, verified: true }
+                        : history
+                );
+
+                transaction.update(userRef, {
+                    balanceHistory: updatedBalanceHistory
+                });
             });
-    
-            return res.status(200).send({ message: "Balance verified and added successfully" });
+
+            return res.status(200).send({ message: "Deposit verified and balance added successfully" });
         } catch (error) {
-            console.error(error);
+            console.error("Error verifying deposit:", error);
             return res.status(500).send({ error: error.message });
         }
     });
-  });
+});
+
 
 
 exports.verifyWithdrawal = functions.https.onRequest((req, res) => {
 // Enable CORS first
-    cors(req, res, async () => {
-        const { userId, amount, txnId, requestedAt: withdrawRequestedAt } = req.body; // Assuming the data is sent via a POST request
+cors(req, res, async () => {
+    const { userId, amount, txnId, requestedAt: withdrawRequestedAt } = req.body; // Assuming the data is sent via a POST request
 
-        try {
+    try {
         const userRef = db.collection("users").doc(userId);
-        const userDoc = await userRef.get();
-
-        if (!userDoc.exists) {
-            return res.status(404).send({ error: "User not found" });
-        }
-
-        const userData = userDoc.data();
         
-        // Find the withdrawal history entry that matches the requested timestamp
-        const historyToVerify = userData.balanceHistory.find(
-            (history) =>
-            history.requestedAt.seconds === withdrawRequestedAt.seconds &&
-            history.requestedAt.nanoseconds === withdrawRequestedAt.nanoseconds &&
-            history.type === 'withdraw' && // Ensure it's a withdraw request
-            !history.verified // Ensure it's unverified
-        );
+        // Use a Firestore transaction to ensure atomicity
+        await db.runTransaction(async (transaction) => {
+            const userDoc = await transaction.get(userRef);
 
-        if (!historyToVerify) {
-            return res.status(404).send({ error: "Withdrawal history entry not found or already verified" });
-        }
+            if (!userDoc.exists) {
+                throw new Error("User not found");
+            }
 
-        // Ensure the withdrawal amount doesn't exceed the user's balance
-        if (userData.balance < amount) {
-            return res.status(400).send({ error: "Insufficient balance for withdrawal" });
-        }
+            const userData = userDoc.data();
 
-        // Deduct the amount from the user's balance
-        await userRef.update({
-            balance: admin.firestore.FieldValue.increment(-amount),
-        });
-        const verifiedAt = admin.firestore.Timestamp.now();
+            // Find the withdrawal history entry that matches the requested timestamp
+            const historyToVerify = userData.balanceHistory.find(
+                (history) =>
+                    history.requestedAt.seconds === withdrawRequestedAt.seconds &&
+                    history.requestedAt.nanoseconds === withdrawRequestedAt.nanoseconds &&
+                    history.type === 'withdraw' && // Ensure it's a withdraw request
+                    !history.verified // Ensure it's unverified
+            );
 
-        // Update the balance history to mark the withdrawal as verified
-        const updatedBalanceHistory = userData.balanceHistory.map((history) =>
-            history.requestedAt.seconds === withdrawRequestedAt.seconds &&
-            history.requestedAt.nanoseconds === withdrawRequestedAt.nanoseconds
-            ? { ...history, verifiedAt, verified: true, txnId: txnId  }
-            : history
-        );
+            if (!historyToVerify) {
+                throw new Error("Withdrawal history entry not found or already verified");
+            }
 
-        await userRef.update({
-            balanceHistory: updatedBalanceHistory,
+            // Ensure the withdrawal amount doesn't exceed the user's balance
+            if (userData.balance < amount) {
+                throw new Error("Insufficient balance for withdrawal");
+            }
+
+            // Deduct the amount from the user's balance
+            transaction.update(userRef, {
+                balance: admin.firestore.FieldValue.increment(-amount)
+            });
+
+            const verifiedAt = admin.firestore.Timestamp.now();
+
+            // Update the balance history to mark the withdrawal as verified
+            const updatedBalanceHistory = userData.balanceHistory.map((history) =>
+                history.requestedAt.seconds === withdrawRequestedAt.seconds &&
+                history.requestedAt.nanoseconds === withdrawRequestedAt.nanoseconds
+                    ? { ...history, verifiedAt, verified: true, txnId: txnId }
+                    : history
+            );
+
+            transaction.update(userRef, {
+                balanceHistory: updatedBalanceHistory
+            });
         });
 
         return res.status(200).send({ message: "Withdrawal verified and balance deducted successfully" });
-        } catch (error) {
-        console.error(error);
+    } catch (error) {
+        console.error("Error verifying withdrawal:", error);
         return res.status(500).send({ error: error.message });
-        }
-    });
+    }
 });
+});
+
 
 
 exports.addBet = functions.https.onRequest(async (req, res) => {
