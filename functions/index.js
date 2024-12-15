@@ -582,6 +582,11 @@ exports.getAllGamesWithBetData = functions.https.onRequest(async (req, res) => {
             const { gameId, bajiId, betType } = req.query;
             const gamesData = [];
 
+            // Get today's timestamp at midnight (start of the day) in Indian Standard Time (IST)
+            const now = new Date();
+            const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+            const todayTimestamp = admin.firestore.Timestamp.fromDate(midnight);
+
             const gamesSnapshot = gameId 
                 ? await db.collection('games').doc(gameId).get()
                 : await db.collection('games').get();
@@ -618,7 +623,9 @@ exports.getAllGamesWithBetData = functions.https.onRequest(async (req, res) => {
 
                     const betTypes = betType ? [betType] : ['Single', 'Jodi', 'Patti'];
                     for (const currentBetType of betTypes) {
-                        const betsSnapshot = await db.collection(`games/${currentGameId}/baji/${currentBajiId}/${currentBetType}`).get();
+                        const betsSnapshot = await db.collection(`games/${currentGameId}/baji/${currentBajiId}/${currentBetType}`)
+                        .where('createdAt', '>=', todayTimestamp) // Filter for current day's bets only in IST using timestamp
+                        .get();
 
                         let betTypeTotalBetAmount = 0;
                         let betTypeTotalWinningPrice = 0;
@@ -702,6 +709,7 @@ exports.getAllGamesWithBetData = functions.https.onRequest(async (req, res) => {
             return res.status(200).send({
                 message: "Games data retrieved successfully.",
                 games: gamesData,
+                currentTime: todayTimestamp
             });
         } catch (error) {
             console.error("Error retrieving games data:", error);
