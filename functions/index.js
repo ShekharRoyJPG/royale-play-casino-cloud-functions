@@ -136,6 +136,11 @@ exports.submitBalanceRequest = functions.https.onRequest(async (req, res) => {
       if (!userId || !amount || !phoneNumber || !txnId || !mode ) {
         return res.status(400).send({ error: 'Missing required fields' });
       }
+
+      // Check for minimum deposit of 100 rupees
+    if (parseFloat(amount) < 100) {
+        return res.status(400).send({ error: 'Minimum deposit is 100 rupees' });
+      }
   
       // Get the current timestamp
       const requestedAt = admin.firestore.Timestamp.now();
@@ -184,6 +189,11 @@ try {
     // Convert the amount to a float for comparison
     const withdrawalAmount = parseFloat(amount);
 
+    // Check for minimum withdrawal of 300
+    if (withdrawalAmount < 300) {
+    return res.status(400).send({ error: 'Minimum withdrawal is 300' });
+    }
+
     // Reference to the user document in Firestore
     const userDocRef = db.collection('users').doc(userId);
     const userDoc = await userDocRef.get();
@@ -222,11 +232,6 @@ try {
     },
     { merge: true }
     );
-
-    // Optionally, update the user's current balance (subtract the withdrawn amount)
-//   await userDocRef.update({
-//     balance: admin.firestore.FieldValue.increment(-withdrawalAmount), // Subtract the withdrawal amount
-//   });
 
     // Return a success response
     return res.status(200).send({ message: 'Withdraw request added successfully.' });
