@@ -211,6 +211,33 @@ try {
     return res.status(400).send({ error: 'Insufficient balance for withdrawal' });
     }
 
+
+    // Get the current time in IST (UTC +5:30)
+    const now = new Date();
+    const IST_OFFSET = 5.5 * 60; // IST is UTC +5:30 (in minutes)
+    const IST = new Date(now.getTime() + IST_OFFSET * 60000); // Convert to IST time
+
+    const currentDay = IST.getDay(); // Sunday = 0, Monday = 1, ..., Saturday = 6
+    const currentTime = IST.getHours() * 60 + IST.getMinutes(); // current time in minutes
+
+    // Define the allowed withdrawal times
+    const isAllowedWithdrawalTime = (currentDay >= 1 && currentDay <= 6 && currentTime >= 660 && currentTime <= 180) || // Monday to Saturday, 11 AM to 3 AM
+      (currentDay === 0 && currentTime >= 660 && currentTime <= 120); // Sunday, 11 AM to 2 PM
+
+    // Check if the current time is within the allowed withdrawal period
+    // if (!isAllowedWithdrawalTime) {
+    //   return res.status(400).send({ error: 'Withdrawals are not allowed at this time' });
+    // }
+
+    // Check if the current time is within the allowed withdrawal period
+    if (!isAllowedWithdrawalTime) {
+        const allowedTimeMessage = currentDay === 0 ?
+            'Withdrawals are allowed only on Sunday between 11 AM and 2 PM IST.' :
+            'Withdrawals are allowed only from Monday to Saturday between 11 AM and 3 AM IST.';
+            
+        return res.status(200).send({ message: `Withdrawals are not allowed at this time. ${allowedTimeMessage}` });
+        }
+
     // Get the current timestamp
     const requestedAt = admin.firestore.Timestamp.now();
 
