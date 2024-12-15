@@ -92,6 +92,41 @@ exports.deleteStaff = functions.https.onRequest(async (req, res) => {
 })
   });
 
+exports.getAllUsers = functions.https.onRequest(async (req, res) => {
+
+    cors(req, res, async () => {
+        // Check the request method
+        if (req.method !== 'GET') {
+          return res.status(405).send('Method Not Allowed');
+        }
+        try {
+            // Reference to the 'users' collection
+            const usersSnapshot = await db.collection('users').get();
+
+            // Extract user data from the snapshot
+            const usersData = usersSnapshot.docs.map(doc => {
+                const {password,balanceHistory, ...userData}=doc.data()
+                return {
+                    id: doc.id, // Document ID
+                    ...userData, // Spread the document data
+                }
+            });
+
+            return res.status(200).json({ 
+            success: true, 
+            data: usersData 
+            });
+        } catch (error) {
+            console.error('Error fetching users:', error);
+            return res.status(500).json({ 
+            success: false, 
+            message: 'Failed to retrieve users', 
+            error: error.message 
+            });
+        }
+    })
+});
+
 exports.submitBalanceRequest = functions.https.onRequest(async (req, res) => {
     try {
       // Get the request body
