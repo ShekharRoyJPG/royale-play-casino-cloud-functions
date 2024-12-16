@@ -1546,150 +1546,192 @@ exports.addBetToLatestGame = functions.https.onRequest(async (req, res) => {
   });
 
 exports.fetchGroupedBetHistory = functions.https.onRequest(async (req, res) => {
-cors(req, res, async () => {
-    try {
-    if (req.method !== 'GET') {
-        return res.status(405).send({ error: 'Method Not Allowed' });
-    }
+    cors(req, res, async () => {
+        try {
 
-    // Query Firestore to get all games of type 'loto'
-    const snapshot = await db.collection('games')
-        .where('type', '==', 'loto')
-        .get();
-
-    if (snapshot.empty) {
-        return res.status(200).send({
-        message: 'No Loto games found.',
-        liveGameHistory: [],
-        recentGamesHistory: []
-        });
-    }
-
-    const createDigitCounts = (range) => {
-        const digitCounts = [];
-        for (let i = 0; i <= range; i++) {
-        const digit = i.toString().padStart(range.toString().length, '0');
-        digitCounts.push({
-            digit: digit,
-            userCount: 0,
-            digitTotalBetPrice: 0
-        });
-        }
-        return digitCounts;
-    };
-
-    const initializeGameHistory = (includeWinningPrice = false) => ({
-        singleDigit: {
-        totalBetAmount: 0,
-        digitCounts: createDigitCounts(9),
-        userList: [],
-        ...(includeWinningPrice && { totalWinningPrice: 0 })
-        },
-        doubleDigit: {
-        totalBetAmount: 0,
-        digitCounts: createDigitCounts(99),
-        userList: [],
-        ...(includeWinningPrice && { totalWinningPrice: 0 })
-        },
-        tripleDigit: {
-        totalBetAmount: 0,
-        digitCounts: createDigitCounts(999),
-        userList: [],
-        ...(includeWinningPrice && { totalWinningPrice: 0 })
-        }
-    });
-
-    const liveGameHistory = initializeGameHistory();
-    const recentGamesHistory = initializeGameHistory(true);
-
-    let grandTotalBetAmount = 0;
-    let grandTotalWinningPrice = 0;
-
-    snapshot.forEach(doc => {
-        const gameData = doc.data();
-        const gameHistory = gameData.gameHistory || [];
-
-        let latestBet = null;
-        if (gameHistory.length > 0) {
-        latestBet = gameHistory.reduce((latest, bet) => {
-            return latest.createdAt?.toDate() > bet.createdAt?.toDate() ? latest : bet;
-        });
-        }
-
-        gameHistory.forEach(bet => {
-        const userList = bet.userList || [];
-
-        userList.forEach(userBet => {
-            const betDigit = userBet.betDigit || '';
-            const betAmount = userBet.amount || 0;
-            const winningPrice = userBet.winningPrice || 0;
-
-            let digitCategory;
-            if (betDigit.length === 1) {
-            digitCategory = 'singleDigit';
-            } else if (betDigit.length === 2) {
-            digitCategory = 'doubleDigit';
-            } else if (betDigit.length === 3) {
-            digitCategory = 'tripleDigit';
-            } else {
-            return;
+            if (req.method !== 'GET') {
+                return res.status(405).send({ error: 'Method Not Allowed' });
             }
 
-            liveGameHistory[digitCategory].totalBetAmount += betAmount;
-            recentGamesHistory[digitCategory].totalBetAmount += betAmount;
-            recentGamesHistory[digitCategory].totalWinningPrice += winningPrice;
+            // Query Firestore to get all games of type 'loto'
+            const snapshot = await db.collection('games')
+                .where('type', '==', 'loto')
+                .get();
 
-            grandTotalBetAmount += betAmount;
-            grandTotalWinningPrice += winningPrice;
-
-            const userBetData = {
-            userId: userBet.userId,
-            betDigit: betDigit,
-            amount: betAmount
-            };
-
-            liveGameHistory[digitCategory].userList.push(userBetData);
-            recentGamesHistory[digitCategory].userList.push(userBetData);
-
-            const updateDigitCounts = (digitCounts) => {
-            const digitData = digitCounts.find(dc => dc.digit === betDigit);
-            if (digitData) {
-                digitData.userCount += 1;
-                digitData.digitTotalBetPrice += betAmount;
+            if (snapshot.empty) {
+                return res.status(200).send({
+                message: 'No Loto games found.',
+                liveGameHistory: [],
+                recentGamesHistory: []
+                });
             }
+
+            const createDigitCounts = (range) => {
+                const digitCounts = [];
+                for (let i = 0; i <= range; i++) {
+                const digit = i.toString().padStart(range.toString().length, '0');
+                digitCounts.push({
+                    digit: digit,
+                    userCount: 0,
+                    digitTotalBetPrice: 0
+                });
+                }
+                return digitCounts;
             };
 
-            updateDigitCounts(liveGameHistory[digitCategory].digitCounts);
-            updateDigitCounts(recentGamesHistory[digitCategory].digitCounts);
-        });
-        });
-    });
+            const initializeGameHistory = (includeWinningPrice = false) => ({
+                singleDigit: {
+                totalBetAmount: 0,
+                digitCounts: createDigitCounts(9),
+                userList: [],
+                ...(includeWinningPrice && { totalWinningPrice: 0 })
+                },
+                doubleDigit: {
+                totalBetAmount: 0,
+                digitCounts: createDigitCounts(99),
+                userList: [],
+                ...(includeWinningPrice && { totalWinningPrice: 0 })
+                },
+                tripleDigit: {
+                totalBetAmount: 0,
+                digitCounts: createDigitCounts(999),
+                userList: [],
+                ...(includeWinningPrice && { totalWinningPrice: 0 })
+                }
+            });
 
-    return res.status(200).send({
-        message: 'Grouped bet history fetched successfully.',
-        liveGameHistory: {
-        ...liveGameHistory,
-        grandTotalBetAmount: liveGameHistory.singleDigit.totalBetAmount + 
-                            liveGameHistory.doubleDigit.totalBetAmount + 
-                            liveGameHistory.tripleDigit.totalBetAmount,
-        },
-        recentGamesHistory: {
-        ...recentGamesHistory,
-        grandTotalBetAmount: recentGamesHistory.singleDigit.totalBetAmount + 
-                            recentGamesHistory.doubleDigit.totalBetAmount + 
-                            recentGamesHistory.tripleDigit.totalBetAmount,
-        grandTotalWinningPrice: recentGamesHistory.singleDigit.totalWinningPrice + 
-                                recentGamesHistory.doubleDigit.totalWinningPrice + 
-                                recentGamesHistory.tripleDigit.totalWinningPrice,
-        },
-        grandTotalBetAmount,
-        grandTotalWinningPrice
+            const liveGameHistory = initializeGameHistory();
+            const recentGamesHistory = initializeGameHistory(true);
+
+            let grandTotalBetAmount = 0;
+            let grandTotalWinningPrice = 0;
+
+            snapshot.forEach(doc => {
+                const gameData = doc.data();
+                const gameHistory = gameData.gameHistory || [];
+
+                let latestBet = null;
+                if (gameHistory.length > 0) {
+                    latestBet = gameHistory.reduce((latest, bet) => {
+                        return latest.createdAt?.toDate() > bet.createdAt?.toDate() ? latest : bet;
+                    });
+                }
+
+                // Populate liveGameHistory only for the latest bet
+                if (latestBet) {
+                    const userList = latestBet.userList || [];
+
+                    userList.forEach(userBet => {
+                        const betDigit = userBet.betDigit || '';
+                        const betAmount = userBet.amount || 0;
+                        const winningPrice = userBet.winningPrice || 0;
+
+                        let digitCategory;
+                        if (betDigit.length === 1) {
+                            digitCategory = 'singleDigit';
+                        } else if (betDigit.length === 2) {
+                            digitCategory = 'doubleDigit';
+                        } else if (betDigit.length === 3) {
+                            digitCategory = 'tripleDigit';
+                        } else {
+                            return;
+                        }
+
+                        // Update liveGameHistory for the latest bet
+                        liveGameHistory[digitCategory].totalBetAmount += betAmount;
+
+                        const userBetData = {
+                            userId: userBet.userId,
+                            betDigit: betDigit,
+                            amount: betAmount
+                        };
+                        liveGameHistory[digitCategory].userList.push(userBetData);
+
+                        const updateDigitCounts = (digitCounts) => {
+                            const digitData = digitCounts.find(dc => dc.digit === betDigit);
+                            if (digitData) {
+                                digitData.userCount += 1;
+                                digitData.digitTotalBetPrice += betAmount;
+                            }
+                        };
+
+                        updateDigitCounts(liveGameHistory[digitCategory].digitCounts);
+                    });
+                }
+
+                // Populate recentGamesHistory for all bets
+                gameHistory.forEach(bet => {
+                const userList = bet.userList || [];
+
+                userList.forEach(userBet => {
+                    const betDigit = userBet.betDigit || '';
+                    const betAmount = userBet.amount || 0;
+                    const winningPrice = userBet.winningPrice || 0;
+
+                    let digitCategory;
+                    if (betDigit.length === 1) {
+                    digitCategory = 'singleDigit';
+                    } else if (betDigit.length === 2) {
+                    digitCategory = 'doubleDigit';
+                    } else if (betDigit.length === 3) {
+                    digitCategory = 'tripleDigit';
+                    } else {
+                    return;
+                    }
+
+                    // Update recentGamesHistory for all bets
+                    recentGamesHistory[digitCategory].totalBetAmount += betAmount;
+                    recentGamesHistory[digitCategory].totalWinningPrice += winningPrice;
+
+                    grandTotalBetAmount += betAmount;
+                    grandTotalWinningPrice += winningPrice;
+
+                    const userBetData = {
+                    userId: userBet.userId,
+                    betDigit: betDigit,
+                    amount: betAmount
+                    };
+
+                    recentGamesHistory[digitCategory].userList.push(userBetData);
+
+                    const updateDigitCounts = (digitCounts) => {
+                    const digitData = digitCounts.find(dc => dc.digit === betDigit);
+                    if (digitData) {
+                        digitData.userCount += 1;
+                        digitData.digitTotalBetPrice += betAmount;
+                    }
+                    };
+
+                    updateDigitCounts(recentGamesHistory[digitCategory].digitCounts);
+                });
+                });
+            });
+
+            return res.status(200).send({
+                message: 'Grouped bet history fetched successfully.',
+                liveGameHistory: {
+                ...liveGameHistory,
+                grandTotalBetAmount: liveGameHistory.singleDigit.totalBetAmount + 
+                                    liveGameHistory.doubleDigit.totalBetAmount + 
+                                    liveGameHistory.tripleDigit.totalBetAmount,
+                },
+                recentGamesHistory: {
+                ...recentGamesHistory,
+                grandTotalBetAmount: recentGamesHistory.singleDigit.totalBetAmount + 
+                                    recentGamesHistory.doubleDigit.totalBetAmount + 
+                                    recentGamesHistory.tripleDigit.totalBetAmount,
+                grandTotalWinningPrice: recentGamesHistory.singleDigit.totalWinningPrice + 
+                                        recentGamesHistory.doubleDigit.totalWinningPrice + 
+                                        recentGamesHistory.tripleDigit.totalWinningPrice,
+                },
+                grandTotalBetAmount,
+                grandTotalWinningPrice
+            });
+        } catch (error) {
+            console.error('Error fetching grouped bet history:', error);
+            return res.status(500).send({ error: 'Failed to fetch grouped bet history.' });
+        }
     });
-    } catch (error) {
-    console.error('Error fetching grouped bet history:', error);
-    return res.status(500).send({ error: 'Failed to fetch grouped bet history.' });
-    }
-});
 });
   
 exports.fetchUserBetHistory = functions.https.onRequest(async (req, res) => {
