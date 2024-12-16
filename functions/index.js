@@ -101,7 +101,9 @@ exports.getAllUsers = functions.https.onRequest(async (req, res) => {
         }
         try {
             // Reference to the 'users' collection
-            const usersSnapshot = await db.collection('users').get();
+            const usersSnapshot = await db.collection('users')
+            .orderBy('createdAt', 'desc') // Sort by 'createdAt' in descending order
+            .get();
 
             // Extract user data from the snapshot
             const usersData = usersSnapshot.docs.map(doc => {
