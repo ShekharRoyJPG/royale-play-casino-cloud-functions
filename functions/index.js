@@ -221,8 +221,28 @@ try {
     const currentTime = IST.getHours() * 60 + IST.getMinutes(); // current time in minutes
 
     // Define the allowed withdrawal times
-    const isAllowedWithdrawalTime = (currentDay >= 1 && currentDay <= 6 && currentTime >= 660 && currentTime <= 180) || // Monday to Saturday, 11 AM to 3 AM
-      (currentDay === 0 && currentTime >= 660 && currentTime <= 120); // Sunday, 11 AM to 2 PM
+    // const isAllowedWithdrawalTime = (currentDay >= 1 && currentDay <= 6 && currentTime >= 660 && currentTime <= 180) || // Monday to Saturday, 11 AM to 3 AM
+    //   (currentDay === 0 && currentTime >= 660 && currentTime <= 840); // Sunday, 11 AM to 2 PM
+
+    const isAllowedWithdrawalTime = 
+  (
+    // Monday to Friday 11:00 AM to 11:59 PM and 12:00 AM to 3:00 AM
+    (currentDay >= 1 && currentDay <= 5 && 
+      ((currentTime >= 660 && currentTime <= 1439) || // 11:00 AM to 11:59 PM
+       (currentTime >= 0 && currentTime <= 180)) // 12:00 AM to 3:00 AM
+    ) 
+  ) || 
+  (
+    // Saturday 11:00 AM to 11:59 PM
+    (currentDay === 6 && currentTime >= 660 && currentTime <= 1439) || 
+    // Saturday night after midnight (technically Sunday)
+    (currentDay === 6 && currentTime >= 0 && currentTime <= 180)
+  ) || 
+  (
+    // Sunday 11:00 AM to 2:00 PM
+    (currentDay === 0 && currentTime >= 660 && currentTime <= 840)
+  );
+
 
     // Check if the current time is within the allowed withdrawal period
     // if (!isAllowedWithdrawalTime) {
