@@ -510,7 +510,14 @@ exports.setWinningDigit = functions.https.onRequest(async (req, res) => {
             return res.status(400).send({ error: "Please select a game, a Baji, a bet type, and enter a winning digit." });
             }
 
-            const resultDate = new Date().toISOString(); // Current date as resultDate
+            const currentDate = new Date(); // Current date as JavaScript Date object
+
+            // Convert to IST
+            const istOffset = 5 * 60 + 30; // IST is UTC+5:30 in minutes
+            const resultDate = new Date(currentDate.getTime() + istOffset * 60 * 1000);
+
+            // Remove IST offset to revert back to UTC
+            // const utcDate = new Date(resultDate.getTime() - istOffset * 60 * 1000);
 
             // Reference to the selected Baji document
             const bajiDocRef = db.collection(`games/${selectedGameId}/baji`).doc(selectedBajiId);
@@ -523,10 +530,9 @@ exports.setWinningDigit = functions.https.onRequest(async (req, res) => {
                 return res.status(404).send({ error: `Baji with ID ${selectedBajiId} not found.` });
             }
 
-            const currentTime = new Date();
-            const currentHour = currentTime.getHours();
-            const currentMinute = currentTime.getMinutes();
-            const currentDayOfWeek = currentTime.getDay(); // 0 (Sunday) to 6 (Saturday)
+            const currentHour = resultDate.getHours();
+            const currentMinute = resultDate.getMinutes();
+            const currentDayOfWeek = resultDate.getDay(); // 0 (Sunday) to 6 (Saturday)
 
             const activeDays = bajiDoc.data()?.activeDays || [];
 
@@ -535,21 +541,42 @@ exports.setWinningDigit = functions.https.onRequest(async (req, res) => {
                     error: `Results cannot be set on ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][currentDayOfWeek]}. This Baji is not active on this day.` 
                 });
             }
+
+            // Define the end time for the day (e.g., 01:00 AM)
+            const endTimeParts = bajiDoc.data()?.endTime.split(':'); // 01:00 (1:00 AM)
+            const endTimeHour = parseInt(endTimeParts[0], 10);
+            const endTimeMinute = parseInt(endTimeParts[1], 10);
+
+            // Check if current time is after endTime (01:00 AM)
+            const isAfterEndTime = (currentHour > endTimeHour) || (currentHour === endTimeHour && currentMinute >= endTimeMinute);
+            
+            if (!isAfterEndTime) {
+                return res.status(400).send({ 
+                    error: `${resultDate} Results can only be set after ${endTimeHour}:${endTimeMinute.toString().padStart(2, '0')}.` 
+                });
+            }
             
             const existingWinningDigits = bajiDoc.data()?.winningDigits || {};
         
             if (
                 existingWinningDigits[selectedBetType] &&
-                existingWinningDigits[selectedBetType].some((entry) => entry.resultDate.split('T')[0] === resultDate.split('T')[0])
+                existingWinningDigits[selectedBetType].some((entry, i) => 
+                {
+                    const entryDate = entry.resultDate.toDate();
+                    const resultDateWithoutTime = new Date(resultDate.getFullYear(), resultDate.getMonth(), resultDate.getDate()); // Set resultDate to midnight to remove the time part
+                    const entryDateWithoutTime = new Date(entryDate.getFullYear(), entryDate.getMonth(), entryDate.getDate());
+                    return entryDateWithoutTime.getTime() === resultDateWithoutTime.getTime(); // Compare the date parts only
+                }
+            )
             ) {
                 return res.status(400).send({
-                    error: `A winning digit has already been set for ${selectedBetType} on ${resultDate}. Only one winning digit is allowed per bet type per day.`,
+                    error: `A winning digit has already been set for ${selectedBetType}. Only one winning digit is allowed per bet type per day.`,
                 });
             }
 
             // Append a new object to the array for the selected bet type
             await bajiDocRef.update({
-            [`winningDigits.${selectedBetType}`]: admin.firestore.FieldValue.arrayUnion({ digit: winningDigit, resultDate }),
+            [`winningDigits.${selectedBetType}`]: admin.firestore.FieldValue.arrayUnion({ digit: winningDigit, resultDate:currentDate }),
             });
 
             // Now, let's update the betStatus for each user based on the winning digit
@@ -565,6 +592,23 @@ exports.setWinningDigit = functions.https.onRequest(async (req, res) => {
                 const betDigit = betData.betDigit;
                 const userId = betData.userId;
                 const betAmount = betData.betAmount;
+
+                const createdAt = betData.createdAt ? betData.createdAt.toDate() : null; // Assuming createdAt is a Firestore Timestamp
+
+                if (!createdAt) {
+                    // If createdAt is not available, skip this bet
+                    continue;
+                }
+            
+                // Convert createdAt and resultDate to same format (remove time part)
+                const createdAtDate = new Date(createdAt.getFullYear(), createdAt.getMonth(), createdAt.getDate());
+                const resultDateWithoutTime = new Date(resultDate.getFullYear(), resultDate.getMonth(), resultDate.getDate());
+            
+                // Compare the dates (without time)
+                if (createdAtDate.getTime() !== resultDateWithoutTime.getTime()) {
+                    // Skip bets that are not from the same day as the resultDate
+                    continue;
+                }
 
                 // Determine the bet status
                 let betStatus = betDigit === winningDigit ? 'win' : 'loss';
