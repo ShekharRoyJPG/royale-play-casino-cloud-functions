@@ -505,12 +505,12 @@ exports.setWinningDigit = functions.https.onRequest(async (req, res) => {
             // Parse request body
             const { selectedGameId, selectedBajiId, selectedBetType, winningDigit } = req.body;
 
-        // Validate required fields
-        if (!selectedGameId || !selectedBajiId || !selectedBetType || !winningDigit) {
-        return res.status(400).send({ error: "Please select a game, a Baji, a bet type, and enter a winning digit." });
-        }
+            // Validate required fields
+            if (!selectedGameId || !selectedBajiId || !selectedBetType || !winningDigit) {
+            return res.status(400).send({ error: "Please select a game, a Baji, a bet type, and enter a winning digit." });
+            }
 
-        const resultDate = new Date().toISOString(); // Current date as resultDate
+            const resultDate = new Date().toISOString(); // Current date as resultDate
 
             // Reference to the selected Baji document
             const bajiDocRef = db.collection(`games/${selectedGameId}/baji`).doc(selectedBajiId);
@@ -536,23 +536,6 @@ exports.setWinningDigit = functions.https.onRequest(async (req, res) => {
                 });
             }
             
-
-            //  // Define the end time for the day (e.g., 01:00 AM)
-            //  const endTimeParts = bajiDoc.data()?.endTime.split(':'); // 01:00 (1:00 AM)
-            //  const endTimeHour = parseInt(endTimeParts[0], 10);
-            //  const endTimeMinute = parseInt(endTimeParts[1], 10);
- 
-            //  // Check if current time is after endTime (01:00 AM)
-            //  const isAfterEndTime = (currentHour > endTimeHour) || (currentHour === endTimeHour && currentMinute >= endTimeMinute);
-             
-            //  if (!isAfterEndTime) {
-            //      return res.status(400).send({ 
-            //          error: `Results can only be set after ${endTimeHour}:${endTimeMinute.toString().padStart(2, '0')}.` 
-            //      });
-            //  }
-
-
-
             const existingWinningDigits = bajiDoc.data()?.winningDigits || {};
         
             if (
