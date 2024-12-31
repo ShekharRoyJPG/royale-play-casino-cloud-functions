@@ -894,20 +894,17 @@ exports.getCombinedHistory = functions.https.onRequest(async (req, res) => {
             const usersSnapshot = await db.collection('users').get();
             const allBalanceHistory = [];
 
+            // Aggregate deposit and withdraw history for all users
+            usersSnapshot.forEach((userDoc) => {
+                const userData = userDoc.data();
+                const userId = userDoc.id;
+                // If userIdFilter is provided, skip users that do not match the filter
+                if (userIdFilter && userId !== userIdFilter) {
+                    return;
+                }
 
-    // Aggregate deposit and withdraw history for all users
-    usersSnapshot.forEach((userDoc) => {
-        const userData = userDoc.data();
-        const userId = userDoc.id;
-        // If userIdFilter is provided, skip users that do not match the filter
-        if (userIdFilter && userId !== userIdFilter) {
-            return;
-        }
-
-        // const allUserData = userData
-        const balanceHistory = userData.balanceHistory || [];
-
-   
+                // const allUserData = userData
+                const balanceHistory = userData.balanceHistory || [];
 
                 balanceHistory.forEach((entry) => {
                     allBalanceHistory.push({
@@ -916,24 +913,27 @@ exports.getCombinedHistory = functions.https.onRequest(async (req, res) => {
                         firstName:userData.firstName,
                         lastName: userData.lastName,
                         userMobileNumber: userData.phone,
-                        userName: "dummy",
+                        userName: userData.lastName || "N/A",
                         type: entry.type, // 'deposit' or 'withdraw'
                         timestamp: entry.requestedAt, // Convert Firestore timestamp to milliseconds
                     });
                 });
             });
 
-
             // Fetch all games
             const gamesSnapshot = await db.collection('games').get();
-            if (gamesSnapshot.empty) {
-                console.warn("No games found.");
-            }
 
             const allBettingHistory = [];
 
             // Aggregate betting history for all games
             for (const gameDoc of gamesSnapshot.docs) {
+                const gameData = gameDoc.data();
+    
+                // Skip games with type 'loto' or where type is unavailable
+                if (gameData.type && gameData.type === 'loto') {
+                    continue;
+                }
+
                 const gameId = gameDoc.id;
 
                 // Fetch all bajis within the game
@@ -950,42 +950,34 @@ exports.getCombinedHistory = functions.https.onRequest(async (req, res) => {
                     for (const betType of betTypes) {
                         const betsSnapshot = await db.collection(`games/${gameId}/baji/${bajiId}/${betType}`).get();
 
-                        if (!betsSnapshot.empty) {
-                        const betsList = betsSnapshot.docs.map((doc) => {
-                            const betData = doc.data();
-                            const userId = betData.userId; // Assuming `userId` is stored in bets
+                        betsSnapshot.forEach((betDoc) => {
+                            const betData = betDoc.data();
+                            const userId = betData.userId;
 
-                            // If userIdFilter is provided, skip bets that do not match the filter
-                            if (userIdFilter && userId !== userIdFilter) {
-                                return null;
-                            }
+                            if (userIdFilter && userId !== userIdFilter) return;
 
-                            return {
-                                id: doc.id,
+                            allBettingHistory.push({
+                                id: betDoc.id,
                                 gameId,
                                 gameName: betData.gameName,
                                 bajiId,
                                 bajiName: betData.bajiName,
                                 betType,
-                                timestamp: betData.createdAt, // Convert Firestore timestamp to milliseconds
-                                userId, // Keep userId for filtering purpose
+                                timestamp: betData.createdAt,
+                                userId,
                                 ...betData,
                                 type: 'bet',
-                            };
+                            });
                         });
-
-                        // allBettingHistory.push(...betsList);
-                        allBettingHistory.push(...betsList.filter(Boolean)); // Filter out null values
-                        }
                     }
                 }
             }
 
-    // Combine all histories (balance and betting)
-    let combinedHistory = [...allBalanceHistory, ...allBettingHistory];
-    combinedHistory = combinedHistory.filter(entry => entry && entry.timestamp);
-    // Sort combined history by timestamp (descending)
-    combinedHistory.sort((a, b) => b.timestamp - a.timestamp);
+            // Combine all histories (balance and betting)
+            let combinedHistory = [...allBalanceHistory, ...allBettingHistory];
+            combinedHistory = combinedHistory.filter(entry => entry && entry.timestamp);
+            // Sort combined history by timestamp (descending)
+            combinedHistory.sort((a, b) => b.timestamp - a.timestamp);
 
             // Return the combined history
             return res.status(200).send({
