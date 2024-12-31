@@ -947,28 +947,37 @@ exports.getCombinedHistory = functions.https.onRequest(async (req, res) => {
 
                     // Iterate through each bet type
                     const betTypes = ['Single', 'Jodi', 'Patti'];
+
                     for (const betType of betTypes) {
                         const betsSnapshot = await db.collection(`games/${gameId}/baji/${bajiId}/${betType}`).get();
+                        await Promise.all(
+                            betsSnapshot.map(async (betDoc) => {
+                                const betData = betDoc.data();
+                                const userId = betData.userId;
 
-                        betsSnapshot.forEach((betDoc) => {
-                            const betData = betDoc.data();
-                            const userId = betData.userId;
+                                if (userIdFilter && userId !== userIdFilter) return;
 
-                            if (userIdFilter && userId !== userIdFilter) return;
+                                // Fetch user data
+                                const userData = await db.collection(`users/${userId}`).get().data();
 
-                            allBettingHistory.push({
-                                id: betDoc.id,
-                                gameId,
-                                gameName: betData.gameName,
-                                bajiId,
-                                bajiName: betData.bajiName,
-                                betType,
-                                timestamp: betData.createdAt,
-                                userId,
-                                ...betData,
-                                type: 'bet',
-                            });
-                        });
+                                allBettingHistory.push({
+                                    id: betDoc.id,
+                                    gameId,
+                                    gameName: betData.gameName,
+                                    bajiId,
+                                    bajiName: betData.bajiName,
+                                    betType,
+                                    timestamp: betData.createdAt,
+                                    userId,
+                                    firstName: userData?.firstName || "N/A",
+                                    lastName: userData?.lastName || "N/A",
+                                    userMobileNumber: userData?.phone || "N/A",
+                                    userName: userData?.lastName || "N/A",
+                                    ...betData,
+                                    type: 'bet',
+                                });
+                            })
+                        )
                     }
                 }
             }
