@@ -913,7 +913,7 @@ exports.getCombinedHistory = functions.https.onRequest(async (req, res) => {
                         firstName:userData.firstName,
                         lastName: userData.lastName,
                         userMobileNumber: userData.phone,
-                        userName: userData.lastName || "N/A",
+                        userName: userData.userName || "N/A",
                         type: entry.type, // 'deposit' or 'withdraw'
                         timestamp: entry.requestedAt, // Convert Firestore timestamp to milliseconds
                     });
@@ -951,14 +951,15 @@ exports.getCombinedHistory = functions.https.onRequest(async (req, res) => {
                     for (const betType of betTypes) {
                         const betsSnapshot = await db.collection(`games/${gameId}/baji/${bajiId}/${betType}`).get();
                         await Promise.all(
-                            betsSnapshot.map(async (betDoc) => {
+                            betsSnapshot.docs.map(async (betDoc) => {
                                 const betData = betDoc.data();
                                 const userId = betData.userId;
 
                                 if (userIdFilter && userId !== userIdFilter) return;
 
                                 // Fetch user data
-                                const userData = await db.collection(`users/${userId}`).get().data();
+                                const userDoc = await db.collection(`users`).doc(userId).get(); // Use `.doc(userId)` to fetch a single document
+                                const userData = userDoc.exists ? userDoc.data() : {};
 
                                 allBettingHistory.push({
                                     id: betDoc.id,
@@ -972,7 +973,7 @@ exports.getCombinedHistory = functions.https.onRequest(async (req, res) => {
                                     firstName: userData?.firstName || "N/A",
                                     lastName: userData?.lastName || "N/A",
                                     userMobileNumber: userData?.phone || "N/A",
-                                    userName: userData?.lastName || "N/A",
+                                    userName: userData?.userName || "N/A",
                                     ...betData,
                                     type: 'bet',
                                 });
