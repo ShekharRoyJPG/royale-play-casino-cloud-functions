@@ -481,6 +481,7 @@ exports.addBet = functions.https.onRequest(async (req, res) => {
             verified: false,
             betStatus:'',
             winningPrice:'',
+            winningDigit:null,
 
             createdAt: admin.firestore.Timestamp.now(),
         };
@@ -508,6 +509,27 @@ exports.setWinningDigit = functions.https.onRequest(async (req, res) => {
             // Validate required fields
             if (!selectedGameId || !selectedBajiId || !selectedBetType || !winningDigit) {
             return res.status(400).send({ error: "Please select a game, a Baji, a bet type, and enter a winning digit." });
+            }
+
+            // Validate winningDigit is a number and not a fraction
+            if (isNaN(winningDigit)) {
+                return res.status(400).send({ error: 'Winning digit must be a valid number.' });
+            }
+
+            // Ensure the winningDigit is an integer
+            if (parseFloat(winningDigit) !== parseInt(winningDigit, 10)) {
+                return res.status(400).send({ error: 'Winning digit must be an integer, not a fraction.' });
+            }
+
+            // Validate winningDigit length based on bet type
+            if (selectedBetType === 'Single' && winningDigit.length !== 1) {
+                return res.status(400).send({ error: 'For Single bet type, winning digit must be 1 digit long.' });
+            }
+            if (selectedBetType === 'Jodi' && winningDigit.length !== 2) {
+                return res.status(400).send({ error: 'For Jodi bet type, winning digit must be 2 digits long.' });
+            }
+            if (selectedBetType === 'Patti' && winningDigit.length !== 3) {
+                return res.status(400).send({ error: 'For Patti bet type, winning digit must be 3 digits long.' });
             }
 
             const currentDate = new Date(); // Current date as JavaScript Date object
@@ -563,8 +585,13 @@ exports.setWinningDigit = functions.https.onRequest(async (req, res) => {
                 existingWinningDigits[selectedBetType].some((entry, i) => 
                 {
                     const entryDate = entry.resultDate.toDate();
+
+                    // Apply IST offset to entryDate
+                    const istOffset = 5 * 60 + 30; // IST is UTC+5:30 in minutes
+                    const entryDateWithOffset = new Date(entryDate.getTime() + istOffset * 60 * 1000);
+
                     const resultDateWithoutTime = new Date(resultDate.getFullYear(), resultDate.getMonth(), resultDate.getDate()); // Set resultDate to midnight to remove the time part
-                    const entryDateWithoutTime = new Date(entryDate.getFullYear(), entryDate.getMonth(), entryDate.getDate());
+                    const entryDateWithoutTime = new Date(entryDateWithOffset.getFullYear(), entryDateWithOffset.getMonth(), entryDateWithOffset.getDate());
                     return entryDateWithoutTime.getTime() === resultDateWithoutTime.getTime(); // Compare the date parts only
                 }
             )
@@ -599,10 +626,17 @@ exports.setWinningDigit = functions.https.onRequest(async (req, res) => {
                     // If createdAt is not available, skip this bet
                     continue;
                 }
+
+                // Apply IST offset to entryDate
+                const istOffset = 5 * 60 + 30; // IST is UTC+5:30 in minutes
+                const createdDateWithOffset = new Date(createdAt.getTime() + istOffset * 60 * 1000);
             
                 // Convert createdAt and resultDate to same format (remove time part)
-                const createdAtDate = new Date(createdAt.getFullYear(), createdAt.getMonth(), createdAt.getDate());
+                const createdAtDate = new Date(createdDateWithOffset.getFullYear(), createdDateWithOffset.getMonth(), createdDateWithOffset.getDate());
                 const resultDateWithoutTime = new Date(resultDate.getFullYear(), resultDate.getMonth(), resultDate.getDate());
+
+                console.log("result date: ",resultDateWithoutTime)
+                console.log("created date: ",createdAtDate)
             
                 // Compare the dates (without time)
                 if (createdAtDate.getTime() !== resultDateWithoutTime.getTime()) {
@@ -614,7 +648,7 @@ exports.setWinningDigit = functions.https.onRequest(async (req, res) => {
                 let betStatus = betDigit === winningDigit ? 'win' : 'loss';
 
                 // Update the bet status in the subcollection
-                batch.update(betDoc.ref, { betStatus });
+                batch.update(betDoc.ref, { betStatus, winningDigit });
 
                 // Calculate the winning price based on betType
                 let winningPrice = betAmount;
@@ -944,6 +978,7 @@ exports.getAllBalanceHistory = functions.https.onRequest(async (req, res) => {
                                 betDigit: user.betDigit,
                                 betStatus: user.isWinner?"win":"loss",
                                 winningPrice: user.winningPrice,
+                                winningDigit: user.winningDigit,
                                 firstName: userData.firstName || "N/A",
                                 lastName: userData.lastName || "N/A",
                                 userMobileNumber: userData.phone || "N/A",
@@ -1299,18 +1334,39 @@ exports.setLotoGameResult = functions.https.onRequest(async (req, res) => {
             
             let isWinner = false;
             let winningPrice = 0;
+            let winningDigit = null;
 
              // Check win conditions based on selectedBetType
-            if (userBetDigit === singleDigit) {
-                isWinner = true;
-                winningPrice = amount * 9;
-            } else if (userBetDigit === doubleDigit) {
-                isWinner = true;
-                winningPrice = amount * 80;
-            } else if (userBetDigit === tripleDigit) {
-                isWinner = true;
-                winningPrice = amount * 100;
+            // if (userBetDigit === singleDigit) {
+            //     isWinner = true;
+            //     winningPrice = amount * 9;
+            // } else if (userBetDigit === doubleDigit) {
+            //     isWinner = true;
+            //     winningPrice = amount * 80;
+            // } else if (userBetDigit === tripleDigit) {
+            //     isWinner = true;
+            //     winningPrice = amount * 100;
+            // }
+            if (userBetDigit.length === 1) {
+                winningDigit = singleDigit; // Update winningDigit based on length
+                if (userBetDigit === singleDigit) {
+                    isWinner = true;
+                    winningPrice = amount * 9;
+                }
+            } else if (userBetDigit.length === 2) {
+                winningDigit = doubleDigit; // Update winningDigit based on length
+                if (userBetDigit === doubleDigit) {
+                    isWinner = true;
+                    winningPrice = amount * 80;
+                }
+            } else if (userBetDigit.length === 3) {
+                winningDigit = tripleDigit; // Update winningDigit based on length
+                if (userBetDigit === tripleDigit) {
+                    isWinner = true;
+                    winningPrice = amount * 100;
+                }
             }
+            
 
             if (isWinner) {
                 // Update user's balance in Firestore
@@ -1328,10 +1384,7 @@ exports.setLotoGameResult = functions.https.onRequest(async (req, res) => {
                 await userRef.set({
                     earned: admin.firestore.FieldValue.increment(parseFloat(winningPrice.toFixed(2))),
                 }, { merge: true });
-    
-                    // Update user's balance
-                    // return userRef.update({ balance: newBalance });
-                    // return userRef.update({ balance: newBalance });
+
                 } else {
                     console.warn(`User with ID ${userId} not found.`);
                 }
@@ -1344,6 +1397,7 @@ exports.setLotoGameResult = functions.https.onRequest(async (req, res) => {
                 ...userBet,
                 isWinner: isWinner ?? false, // Ensure it's a boolean
                 winningPrice: isWinner ? parseFloat(winningPrice.toFixed(2)) : 0, // Ensure it's a number
+                winningDigit: winningDigit,
             };
 
             // Remove any undefined values from the userBet object
@@ -1353,12 +1407,6 @@ exports.setLotoGameResult = functions.https.onRequest(async (req, res) => {
                 }
             });
             return updatedUserBet;
-
-            // return {
-            //     ...userBet,
-            //     isWinner,
-            //     winningPrice: isWinner ? parseFloat(winningPrice.toFixed(2)) : 0,
-            //   };
         });
   
         // Update the resultDigit of the latest bet in the gameHistory
