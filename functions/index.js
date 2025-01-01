@@ -983,8 +983,52 @@ exports.getCombinedHistory = functions.https.onRequest(async (req, res) => {
                 }
             }
 
+            // Fetch loto game history
+            const allLotoHistory = [];
+            for (const gameDoc of gamesSnapshot.docs) {
+                const gameData = gameDoc.data();
+                if (gameData.type !== 'loto') {
+                    continue;
+                }
+
+                const gameId = gameDoc.id;
+                const gameHistory = gameData.gameHistory || [];
+
+                gameHistory.forEach(async(entry) => {
+                    const userList = entry.userList || [];
+                    userList.forEach(async (user) => {
+                        const userId = user.userId;
+
+                        if (userIdFilter && userId !== userIdFilter) return;
+
+                        // Fetch user data
+                        const userDoc = await db.collection(`users`).doc(userId).get(); // Use `.doc(userId)` to fetch a single document
+                        const userData = userDoc.exists ? userDoc.data() : {};
+
+                        allLotoHistory.push({
+                            gameId,
+                            gameName: gameData.title || "Loto Game",
+                            type: 'loto',
+                            timestamp: user.createdAt,
+                            userId,
+                            amount: user.amount,
+                            betDigit: user.betdigit,
+                            isWinner: user.isWinner,
+                            winningPrice: user.winningPrice,
+                            
+                            firstName: userData?.firstName || "N/A",
+                            lastName: userData?.lastName || "N/A",
+                            userMobileNumber: userData?.phone || "N/A",
+                            userName: userData?.userName || "N/A",
+                        });
+                    });
+                });
+            }
+
+            console.log("loto history: ",allLotoHistory)
+
             // Combine all histories (balance and betting)
-            let combinedHistory = [...allBalanceHistory, ...allBettingHistory];
+            let combinedHistory = [...allBalanceHistory, ...allBettingHistory, ...allLotoHistory];
             combinedHistory = combinedHistory.filter(entry => entry && entry.timestamp);
             // Sort combined history by timestamp (descending)
             combinedHistory.sort((a, b) => b.timestamp - a.timestamp);
