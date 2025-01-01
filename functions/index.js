@@ -885,82 +885,86 @@ exports.getAllBalanceHistory = functions.https.onRequest(async (req, res) => {
 })
   });
 
-exports.getCombinedHistory = functions.https.onRequest(async (req, res) => {
+  exports.getCombinedHistory = functions.https.onRequest(async (req, res) => {
     cors(req, res, async () => {
         try {
-            // Get the optional userId filter from query parameters
             const userIdFilter = req.query.userId || null;
-            // Fetch all user documents from the 'users' collection
+
+            // Fetch all user data upfront
             const usersSnapshot = await db.collection('users').get();
+            const usersMap = new Map();
+            usersSnapshot.forEach(userDoc => {
+                usersMap.set(userDoc.id, userDoc.data());
+            });
+
             const allBalanceHistory = [];
+            usersMap.forEach((userData, userId) => {
+                if (userIdFilter && userId !== userIdFilter) return;
 
-            // Aggregate deposit and withdraw history for all users
-            usersSnapshot.forEach((userDoc) => {
-                const userData = userDoc.data();
-                const userId = userDoc.id;
-                // If userIdFilter is provided, skip users that do not match the filter
-                if (userIdFilter && userId !== userIdFilter) {
-                    return;
-                }
-
-                // const allUserData = userData
                 const balanceHistory = userData.balanceHistory || [];
-
-                balanceHistory.forEach((entry) => {
+                balanceHistory.forEach(entry => {
                     allBalanceHistory.push({
                         ...entry,
-                        userId, // Keep userId for filtering purpose
-                        firstName:userData.firstName,
+                        userId,
+                        firstName: userData.firstName,
                         lastName: userData.lastName,
                         userMobileNumber: userData.phone,
                         userName: userData.userName || "N/A",
-                        type: entry.type, // 'deposit' or 'withdraw'
-                        timestamp: entry.requestedAt, // Convert Firestore timestamp to milliseconds
+                        type: entry.type,
+                        timestamp: entry.requestedAt,
                     });
                 });
             });
 
-            // Fetch all games
+            // Fetch games and their data
             const gamesSnapshot = await db.collection('games').get();
-
             const allBettingHistory = [];
+            const allLotoHistory = [];
 
-            // Aggregate betting history for all games
             for (const gameDoc of gamesSnapshot.docs) {
                 const gameData = gameDoc.data();
-    
-                // Skip games with type 'loto' or where type is unavailable
-                if (gameData.type && gameData.type === 'loto') {
-                    continue;
-                }
-
                 const gameId = gameDoc.id;
 
-                // Fetch all bajis within the game
-                const bajisSnapshot = await db.collection(`games/${gameId}/baji`).get();
-                if (bajisSnapshot.empty) {
-                    continue; // Skip games without bajis
-                }
+                if (gameData.type === 'loto') {
+                    // Handle Loto games
+                    const gameHistory = gameData.gameHistory || [];
+                    gameHistory.forEach(entry => {
+                        const userList = entry.userList || [];
+                        userList.forEach(user => {
+                            if (userIdFilter && user.userId !== userIdFilter) return;
 
-                for (const bajiDoc of bajisSnapshot.docs) {
-                    const bajiId = bajiDoc.id;
+                            const userData = usersMap.get(user.userId) || {};
+                            allLotoHistory.push({
+                                gameId,
+                                gameName: gameData.title || "Loto Game",
+                                type: 'loto',
+                                timestamp: user.createdAt,
+                                userId: user.userId,
+                                betAmount: user.amount,
+                                betDigit: user.betDigit,
+                                betStatus: user.isWinner?"win":"loss",
+                                winningPrice: user.winningPrice,
+                                firstName: userData.firstName || "N/A",
+                                lastName: userData.lastName || "N/A",
+                                userMobileNumber: userData.phone || "N/A",
+                                userName: userData.userName || "N/A",
+                            });
+                        });
+                    });
+                } else {
+                    // Handle betting games
+                    const bajisSnapshot = await db.collection(`games/${gameId}/baji`).get();
+                    for (const bajiDoc of bajisSnapshot.docs) {
+                        const bajiId = bajiDoc.id;
 
-                    // Iterate through each bet type
-                    const betTypes = ['Single', 'Jodi', 'Patti'];
-
-                    for (const betType of betTypes) {
-                        const betsSnapshot = await db.collection(`games/${gameId}/baji/${bajiId}/${betType}`).get();
-                        await Promise.all(
-                            betsSnapshot.docs.map(async (betDoc) => {
+                        const betTypes = ['Single', 'Jodi', 'Patti'];
+                        for (const betType of betTypes) {
+                            const betsSnapshot = await db.collection(`games/${gameId}/baji/${bajiId}/${betType}`).get();
+                            betsSnapshot.docs.forEach(betDoc => {
                                 const betData = betDoc.data();
-                                const userId = betData.userId;
+                                if (userIdFilter && betData.userId !== userIdFilter) return;
 
-                                if (userIdFilter && userId !== userIdFilter) return;
-
-                                // Fetch user data
-                                const userDoc = await db.collection(`users`).doc(userId).get(); // Use `.doc(userId)` to fetch a single document
-                                const userData = userDoc.exists ? userDoc.data() : {};
-
+                                const userData = usersMap.get(betData.userId) || {};
                                 allBettingHistory.push({
                                     id: betDoc.id,
                                     gameId,
@@ -969,71 +973,24 @@ exports.getCombinedHistory = functions.https.onRequest(async (req, res) => {
                                     bajiName: betData.bajiName,
                                     betType,
                                     timestamp: betData.createdAt,
-                                    userId,
-                                    firstName: userData?.firstName || "N/A",
-                                    lastName: userData?.lastName || "N/A",
-                                    userMobileNumber: userData?.phone || "N/A",
-                                    userName: userData?.userName || "N/A",
+                                    userId: betData.userId,
+                                    firstName: userData.firstName || "N/A",
+                                    lastName: userData.lastName || "N/A",
+                                    userMobileNumber: userData.phone || "N/A",
+                                    userName: userData.userName || "N/A",
                                     ...betData,
                                     type: 'bet',
                                 });
-                            })
-                        )
+                            });
+                        }
                     }
                 }
             }
 
-            // Fetch loto game history
-            const allLotoHistory = [];
-            for (const gameDoc of gamesSnapshot.docs) {
-                const gameData = gameDoc.data();
-                if (gameData.type !== 'loto') {
-                    continue;
-                }
-
-                const gameId = gameDoc.id;
-                const gameHistory = gameData.gameHistory || [];
-
-                gameHistory.forEach(async(entry) => {
-                    const userList = entry.userList || [];
-                    userList.forEach(async (user) => {
-                        const userId = user.userId;
-
-                        if (userIdFilter && userId !== userIdFilter) return;
-
-                        // Fetch user data
-                        const userDoc = await db.collection(`users`).doc(userId).get(); // Use `.doc(userId)` to fetch a single document
-                        const userData = userDoc.exists ? userDoc.data() : {};
-
-                        allLotoHistory.push({
-                            gameId,
-                            gameName: gameData.title || "Loto Game",
-                            type: 'loto',
-                            timestamp: user.createdAt,
-                            userId,
-                            amount: user.amount,
-                            betDigit: user.betdigit,
-                            isWinner: user.isWinner,
-                            winningPrice: user.winningPrice,
-                            
-                            firstName: userData?.firstName || "N/A",
-                            lastName: userData?.lastName || "N/A",
-                            userMobileNumber: userData?.phone || "N/A",
-                            userName: userData?.userName || "N/A",
-                        });
-                    });
-                });
-            }
-
-            console.log("loto history: ",allLotoHistory)
-
-            // Combine all histories (balance and betting)
             let combinedHistory = [...allBalanceHistory, ...allBettingHistory, ...allLotoHistory];
             combinedHistory = combinedHistory.filter(entry => entry && entry.timestamp);
-            // Sort combined history by timestamp (descending)
             combinedHistory.sort((a, b) => b.timestamp - a.timestamp);
 
-            // Return the combined history
             return res.status(200).send({
                 message: 'Combined history retrieved successfully.',
                 data: combinedHistory,
@@ -1044,6 +1001,7 @@ exports.getCombinedHistory = functions.https.onRequest(async (req, res) => {
         }
     });
 });
+
 
 exports.addGame = functions.https.onRequest(async (req, res) => {
     cors(req, res, async () => {
