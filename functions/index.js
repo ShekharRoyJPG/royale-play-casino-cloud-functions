@@ -656,11 +656,11 @@ exports.setWinningDigit = functions.https.onRequest(async (req, res) => {
                 // If the bet was a win, update the user's balance
                 if (betStatus === 'win') {
                     if (selectedBetType === 'Single') {
-                        winningPrice = betAmount * 9;
+                        winningPrice = betAmount * 9.7;
                     } else if (selectedBetType === 'Jodi') {
-                        winningPrice = betAmount * 80;
+                        winningPrice = betAmount * 90;
                     } else if (selectedBetType === 'Patti') {
-                        winningPrice = betAmount * 100;
+                        winningPrice = betAmount * 130;
                     }
 
                     const userRef = db.collection('users').doc(userId);
@@ -1339,31 +1339,31 @@ exports.setLotoGameResult = functions.https.onRequest(async (req, res) => {
              // Check win conditions based on selectedBetType
             // if (userBetDigit === singleDigit) {
             //     isWinner = true;
-            //     winningPrice = amount * 9;
+            //     winningPrice = amount * 9.7;
             // } else if (userBetDigit === doubleDigit) {
             //     isWinner = true;
-            //     winningPrice = amount * 80;
+            //     winningPrice = amount * 90;
             // } else if (userBetDigit === tripleDigit) {
             //     isWinner = true;
-            //     winningPrice = amount * 100;
+            //     winningPrice = amount * 130;
             // }
             if (userBetDigit.length === 1) {
                 winningDigit = singleDigit; // Update winningDigit based on length
                 if (userBetDigit === singleDigit) {
                     isWinner = true;
-                    winningPrice = amount * 9;
+                    winningPrice = amount * 9.7;
                 }
             } else if (userBetDigit.length === 2) {
                 winningDigit = doubleDigit; // Update winningDigit based on length
                 if (userBetDigit === doubleDigit) {
                     isWinner = true;
-                    winningPrice = amount * 80;
+                    winningPrice = amount * 90;
                 }
             } else if (userBetDigit.length === 3) {
                 winningDigit = tripleDigit; // Update winningDigit based on length
                 if (userBetDigit === tripleDigit) {
                     isWinner = true;
-                    winningPrice = amount * 100;
+                    winningPrice = amount * 130;
                 }
             }
             
