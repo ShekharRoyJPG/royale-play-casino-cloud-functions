@@ -2017,3 +2017,264 @@ exports.deleteBaji = functions.https.onRequest(async (req, res) => {
         }
     });
 });
+
+exports.getProfitLossData = functions.https.onRequest(async (req, res) => {
+    cors(req, res, async () => {
+        try {
+            const { gameId, bajiId, createdAt } = req.query;
+
+            // Validation: Ensure all required parameters are provided
+            if (!gameId || !bajiId || !createdAt) {
+                return res.status(400).send({
+                    error: "Missing required parameters. Please provide gameId, bajiId, and createdAt."
+                });
+            }
+
+            const gamesData = [];
+
+            // Convert createdAt to Firestore Timestamp
+            const todayTimestamp = admin.firestore.Timestamp.fromMillis(parseInt(createdAt, 10));
+
+            // Fetch the game document
+            const gameDoc = await db.collection('games').doc(gameId).get();
+            if (!gameDoc.exists) {
+                return res.status(404).send({ error: "Game not found." });
+            }
+
+            const gameData = { ...gameDoc.data(), gameId };
+
+            // Fetch the baji document
+            const bajiDoc = await db.collection(`games/${gameId}/baji`).doc(bajiId).get();
+            if (!bajiDoc.exists) {
+                return res.status(404).send({ error: "Baji not found." });
+            }
+
+            const bajiData = { ...bajiDoc.data(), bajiId };
+
+            let totalBetAmount = 0;
+            let totalWinningPrice = 0;
+            const betTypesData = [];
+
+            // Iterate over all bet types
+            const betTypes = ['Single', 'Jodi', 'Patti'];
+            for (const betType of betTypes) {
+                let betTypeTotalBetAmount = 0;
+                let betTypeTotalWinningPrice = 0;
+
+                // Initialize digit-based tracking
+                const digitRange = betType === 'Single' ? 10 : betType === 'Jodi' ? 100 : 1000;
+                const digitCounts = Array.from({ length: digitRange }, (_, i) => ({
+                    digit: i.toString(),
+                    userCount: 0,
+                    digitTotalBetPrice: 0
+                }));
+
+                const usersPerDigit = {};
+
+                // Fetch the bets for the current betType
+                const betsSnapshot = await db.collection(`games/${gameId}/baji/${bajiId}/${betType}`)
+                    .where('createdAt', '>=', todayTimestamp)
+                    .get();
+
+                const betsData = [];
+
+                if (!betsSnapshot.empty) {
+                    betsSnapshot.docs.forEach((betDoc) => {
+                        const betData = { ...betDoc.data(), betId: betDoc.id };
+                        betsData.push(betData);
+
+                        const betAmount = betData.betAmount || 0;
+                        const winningPrice = betData.winningPrice || 0;
+                        const betDigit = parseInt(betData.betDigit, 10);
+                        const userId = betData.userId;
+
+                        betTypeTotalBetAmount += betAmount;
+                        betTypeTotalWinningPrice += winningPrice;
+
+                        // Track bets per digit
+                        if (!isNaN(betDigit) && betDigit >= 0 && betDigit < digitRange) {
+                            if (!usersPerDigit[betDigit]) {
+                                usersPerDigit[betDigit] = new Set();
+                            }
+                            usersPerDigit[betDigit].add(userId);
+                            digitCounts[betDigit].digitTotalBetPrice += betAmount;
+                        }
+                    });
+
+                    // Update user counts per digit
+                    for (const [digit, userSet] of Object.entries(usersPerDigit)) {
+                        const count = userSet.size;
+                        const digitIndex = parseInt(digit, 10);
+                        if (!isNaN(digitIndex) && digitIndex >= 0 && digitIndex < digitRange) {
+                            digitCounts[digitIndex].userCount = count;
+                        }
+                    }
+                }
+
+                // Accumulate total values across bet types
+                totalBetAmount += betTypeTotalBetAmount;
+                totalWinningPrice += betTypeTotalWinningPrice;
+
+                // Store individual bet type data
+                betTypesData.push({
+                    betType,
+                    totalBetAmount: betTypeTotalBetAmount,
+                    totalWinningPrice: betTypeTotalWinningPrice,
+                    digitCounts
+                });
+            }
+
+            return res.status(200).send({
+                message: "Profit/Loss data retrieved successfully.",
+                gameId,
+                bajiId,
+                totalBetAmount, // Sum of all bet types
+                totalWinningPrice, // Sum of all bet types
+                profitOrLoss: totalBetAmount - totalWinningPrice,
+                betTypes: betTypesData, // Each bet type's individual sum
+                currentTime: todayTimestamp
+            });
+
+        } catch (error) {
+            console.error("Error retrieving profit/loss data:", error);
+            return res.status(500).send({ error: "Failed to retrieve profit/loss data." });
+        }
+    });
+});
+
+exports.getAllGamesWithBajis = functions.https.onRequest(async (req, res) => {
+    cors(req, res, async () => {
+        try {
+            const gamesSnapshot = await db.collection("games").get();
+            if (gamesSnapshot.empty) {
+                return res.status(200).send({ games: [] });
+            }
+
+            const gamesData = [];
+
+            for (const gameDoc of gamesSnapshot.docs) {
+                const gameId = gameDoc.id;
+                const gameData = { ...gameDoc.data(), gameId };
+
+                // Fetch all bajis under the current game
+                const bajisSnapshot = await db.collection(`games/${gameId}/baji`).get();
+                const bajisData = bajisSnapshot.docs.map(bajiDoc => ({
+                    bajiId: bajiDoc.id,
+                    bajiName:bajiDoc.title,
+                    updatedAt: bajiDoc.updatedAt
+                }));
+
+                gamesData.push({
+                    gameId,
+                    gameName: gameData.title || "Unknown Game",
+                    bajis: bajisData
+                });
+            }
+
+            return res.status(200).send({
+                message: "Games and bajis retrieved successfully.",
+                games: gamesData
+            });
+        } catch (error) {
+            console.error("Error retrieving games and bajis:", error);
+            return res.status(500).send({ error: "Failed to retrieve games and bajis." });
+        }
+    });
+});
+
+
+exports.lotoprofitloss = functions.https.onRequest(async (req, res) => {
+    cors(req, res, async () => {
+        try {
+            if (req.method !== 'GET') {
+                return res.status(405).send({ error: 'Method Not Allowed' });
+            }
+
+            const { createdAt } = req.query;
+            if (!createdAt) {
+                return res.status(400).send({ error: 'Date parameter is required' });
+            }
+
+            const selectedDate = new Date(createdAt);
+            selectedDate.setHours(0, 0, 0, 0);
+            const nextDay = new Date(selectedDate);
+            nextDay.setDate(selectedDate.getDate() + 1);
+
+            const snapshot = await db.collection('games')
+                .where('type', '==', 'loto')
+                .get();
+
+            if (snapshot.empty) {
+                return res.status(200).send({
+                    message: 'No Loto games found for the given date.',
+                    grandTotalBetAmount: 0,
+                    grandTotalWinningPrice: 0,
+                    grandProfitOrLoss: 0,
+                    betDigitCategoryWiseTotalBetAmount: {},
+                    betDigitCategoryWiseTotalWinningAmount: {},
+                    betDigitCategoryWiseTotalProfitLossAmount: {}
+                });
+            }
+
+            let grandTotalBetAmount = 0;
+            let grandTotalWinningPrice = 0;
+            const betDigitCategoryWiseTotalBetAmount = { singleDigit: 0, doubleDigit: 0, tripleDigit: 0 };
+            const betDigitCategoryWiseTotalWinningAmount = { singleDigit: 0, doubleDigit: 0, tripleDigit: 0 };
+
+            snapshot.forEach(doc => {
+                const gameData = doc.data();
+                const gameHistory = gameData.gameHistory || [];
+
+                gameHistory.forEach(bet => {
+                    const betDate = bet.createdAt?.toDate();
+                    if (betDate && betDate.toDate() >= selectedDate && betDate.toDate() < nextDay) {
+                        const userList = bet.userList || [];
+
+                        userList.forEach(userBet => {
+                            const betDigit = userBet.betDigit || '';
+                            const betAmount = userBet.amount || 0;
+                            const winningPrice = userBet.winningPrice || 0;
+
+                            let digitCategory;
+                            if (betDigit.length === 1) {
+                                digitCategory = 'singleDigit';
+                            } else if (betDigit.length === 2) {
+                                digitCategory = 'doubleDigit';
+                            } else if (betDigit.length === 3) {
+                                digitCategory = 'tripleDigit';
+                            } else {
+                                return;
+                            }
+
+                            grandTotalBetAmount += betAmount;
+                            grandTotalWinningPrice += winningPrice;
+                            betDigitCategoryWiseTotalBetAmount[digitCategory] += betAmount;
+                            betDigitCategoryWiseTotalWinningAmount[digitCategory] += winningPrice;
+                        });
+                    }
+                });
+            });
+
+            const betDigitCategoryWiseTotalProfitLossAmount = {
+                singleDigit: betDigitCategoryWiseTotalBetAmount.singleDigit - betDigitCategoryWiseTotalWinningAmount.singleDigit,
+                doubleDigit: betDigitCategoryWiseTotalBetAmount.doubleDigit - betDigitCategoryWiseTotalWinningAmount.doubleDigit,
+                tripleDigit: betDigitCategoryWiseTotalBetAmount.tripleDigit - betDigitCategoryWiseTotalWinningAmount.tripleDigit
+            };
+
+            const grandProfitOrLoss = grandTotalBetAmount - grandTotalWinningPrice;
+
+            return res.status(200).send({
+                message: 'Loto profit/loss data fetched successfully.',
+                grandTotalBetAmount,
+                grandTotalWinningPrice,
+                grandProfitOrLoss,
+                betDigitCategoryWiseTotalBetAmount,
+                betDigitCategoryWiseTotalWinningAmount,
+                betDigitCategoryWiseTotalProfitLossAmount
+            });
+        } catch (error) {
+            console.error('Error fetching loto profit/loss:', error);
+            return res.status(500).send({ error: 'Failed to fetch loto profit/loss data.' });
+        }
+    });
+});
