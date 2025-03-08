@@ -2018,130 +2018,6 @@ exports.deleteBaji = functions.https.onRequest(async (req, res) => {
     });
 });
 
-exports.getProfitLossData = functions.https.onRequest(async (req, res) => {
-    cors(req, res, async () => {
-        try {
-            const { gameId, bajiId, createdAt } = req.query;
-
-            // Validation: Ensure all required parameters are provided
-            if (!gameId || !bajiId || !createdAt) {
-                return res.status(400).send({
-                    error: "Missing required parameters. Please provide gameId, bajiId, and createdAt."
-                });
-            }
-
-            const gamesData = [];
-
-            // Convert createdAt to Firestore Timestamp
-            const todayTimestamp = admin.firestore.Timestamp.fromMillis(parseInt(createdAt, 10));
-
-            // Fetch the game document
-            const gameDoc = await db.collection('games').doc(gameId).get();
-            if (!gameDoc.exists) {
-                return res.status(404).send({ error: "Game not found." });
-            }
-
-            const gameData = { ...gameDoc.data(), gameId };
-
-            // Fetch the baji document
-            const bajiDoc = await db.collection(`games/${gameId}/baji`).doc(bajiId).get();
-            if (!bajiDoc.exists) {
-                return res.status(404).send({ error: "Baji not found." });
-            }
-
-            const bajiData = { ...bajiDoc.data(), bajiId };
-
-            let totalBetAmount = 0;
-            let totalWinningPrice = 0;
-            const betTypesData = [];
-
-            // Iterate over all bet types
-            const betTypes = ['Single', 'Jodi', 'Patti'];
-            for (const betType of betTypes) {
-                let betTypeTotalBetAmount = 0;
-                let betTypeTotalWinningPrice = 0;
-
-                // Initialize digit-based tracking
-                const digitRange = betType === 'Single' ? 10 : betType === 'Jodi' ? 100 : 1000;
-                const digitCounts = Array.from({ length: digitRange }, (_, i) => ({
-                    digit: i.toString(),
-                    userCount: 0,
-                    digitTotalBetPrice: 0
-                }));
-
-                const usersPerDigit = {};
-
-                // Fetch the bets for the current betType
-                const betsSnapshot = await db.collection(`games/${gameId}/baji/${bajiId}/${betType}`)
-                    .where('createdAt', '>=', todayTimestamp)
-                    .get();
-
-                const betsData = [];
-
-                if (!betsSnapshot.empty) {
-                    betsSnapshot.docs.forEach((betDoc) => {
-                        const betData = { ...betDoc.data(), betId: betDoc.id };
-                        betsData.push(betData);
-
-                        const betAmount = betData.betAmount || 0;
-                        const winningPrice = betData.winningPrice || 0;
-                        const betDigit = parseInt(betData.betDigit, 10);
-                        const userId = betData.userId;
-
-                        betTypeTotalBetAmount += betAmount;
-                        betTypeTotalWinningPrice += winningPrice;
-
-                        // Track bets per digit
-                        if (!isNaN(betDigit) && betDigit >= 0 && betDigit < digitRange) {
-                            if (!usersPerDigit[betDigit]) {
-                                usersPerDigit[betDigit] = new Set();
-                            }
-                            usersPerDigit[betDigit].add(userId);
-                            digitCounts[betDigit].digitTotalBetPrice += betAmount;
-                        }
-                    });
-
-                    // Update user counts per digit
-                    for (const [digit, userSet] of Object.entries(usersPerDigit)) {
-                        const count = userSet.size;
-                        const digitIndex = parseInt(digit, 10);
-                        if (!isNaN(digitIndex) && digitIndex >= 0 && digitIndex < digitRange) {
-                            digitCounts[digitIndex].userCount = count;
-                        }
-                    }
-                }
-
-                // Accumulate total values across bet types
-                totalBetAmount += betTypeTotalBetAmount;
-                totalWinningPrice += betTypeTotalWinningPrice;
-
-                // Store individual bet type data
-                betTypesData.push({
-                    betType,
-                    totalBetAmount: betTypeTotalBetAmount,
-                    totalWinningPrice: betTypeTotalWinningPrice,
-                    digitCounts
-                });
-            }
-
-            return res.status(200).send({
-                message: "Profit/Loss data retrieved successfully.",
-                gameId,
-                bajiId,
-                totalBetAmount, // Sum of all bet types
-                totalWinningPrice, // Sum of all bet types
-                profitOrLoss: totalBetAmount - totalWinningPrice,
-                betTypes: betTypesData, // Each bet type's individual sum
-                currentTime: todayTimestamp
-            });
-
-        } catch (error) {
-            console.error("Error retrieving profit/loss data:", error);
-            return res.status(500).send({ error: "Failed to retrieve profit/loss data." });
-        }
-    });
-});
-
 exports.getAllGamesWithBajis = functions.https.onRequest(async (req, res) => {
     cors(req, res, async () => {
         try {
@@ -2160,8 +2036,9 @@ exports.getAllGamesWithBajis = functions.https.onRequest(async (req, res) => {
                 const bajisSnapshot = await db.collection(`games/${gameId}/baji`).get();
                 const bajisData = bajisSnapshot.docs.map(bajiDoc => ({
                     bajiId: bajiDoc.id,
-                    bajiName:bajiDoc.title,
-                    updatedAt: bajiDoc.updatedAt
+                    ...bajiDoc.data()
+                    // bajiName:bajiDoc.title,
+                    // updatedAt: bajiDoc.updatedAt
                 }));
 
                 gamesData.push({
@@ -2182,6 +2059,153 @@ exports.getAllGamesWithBajis = functions.https.onRequest(async (req, res) => {
     });
 });
 
+exports.getProfitLossData = functions.https.onRequest(async (req, res) => {
+    cors(req, res, async () => {
+        try {
+            const { gameId, bajiId, createdAt } = req.query;
+
+            // Validate required parameters
+            if (!gameId || !bajiId || !createdAt) {
+                throw new Error("Missing required parameters. Please provide gameId, bajiId, and createdAt.");
+            }
+
+            if (isNaN(parseInt(createdAt, 10))) {
+                throw new Error("Invalid createdAt value. Must be a valid timestamp.");
+            }
+
+            // Convert createdAt to Firestore Timestamp
+            const createdAtMillis = parseInt(createdAt, 10); 
+            const createdAtDate = new Date(createdAtMillis);
+
+            // Set start boundary (Midnight: 00:00:00)
+            createdAtDate.setHours(0, 0, 0, 0);
+            const startOfDayTimestamp = admin.firestore.Timestamp.fromDate(createdAtDate);
+
+            // Set end boundary (23:59:59)
+            const endOfDayDate = new Date(createdAtMillis);
+            endOfDayDate.setHours(23, 59, 59, 999);
+            const endOfDayTimestamp = admin.firestore.Timestamp.fromDate(endOfDayDate);
+
+            // Fetch the game document
+            const gameDoc = await db.collection('games').doc(gameId).get();
+            if (!gameDoc.exists) {
+                throw new Error(`Game with ID ${gameId} not found.`);
+            }
+
+            let totalBetAmount = 0;
+            let totalWinningPrice = 0;
+            const betTypesData = [];
+
+            // Iterate over all bet types
+            const betTypes = ['Single', 'Jodi', 'Patti'];
+            for (const betType of betTypes) {
+                try {
+                    let betTypeTotalBetAmount = 0;
+                    let betTypeTotalWinningPrice = 0;
+                    let betTypeWinnigDigit=null;
+                    // const digitRange = betType === 'Single' ? 10 : betType === 'Jodi' ? 100 : 1000;
+                    // const digitCounts = Array.from({ length: digitRange }, (_, i) => ({
+                    //     digit: i.toString(),
+                    //     userCount: 0,
+                    //     digitTotalBetPrice: 0
+                    // }));
+
+                    // const usersPerDigit = {};
+
+                    // Fetch the bets for the current betType
+                    const betsSnapshot = await db
+                        .collection(`games/${gameId}/baji/${bajiId}/${betType}`)
+                        .where('createdAt', '>=', startOfDayTimestamp)
+                        .where('createdAt', '<=', endOfDayTimestamp) // Ensures bets are within the same day
+                        .get();
+                    
+                    
+
+                    if (!betsSnapshot.empty) {
+                        betsSnapshot.docs.forEach((betDoc) => {
+
+                            const betData = { ...betDoc.data(), betId: betDoc.id };
+
+
+                            const betAmount = betData.betAmount || 0;
+                            const winningPrice = betData.winningPrice || 0;
+                            betTypeWinnigDigit=betData.winningDigit
+                            // const betDigit = parseInt(betData.betDigit, 10);
+                            // const userId = betData.userId;
+
+                            betTypeTotalBetAmount += betAmount;
+                            betTypeTotalWinningPrice += winningPrice;
+                            
+
+                            // Track bets per digit
+                            // if (!isNaN(betDigit) && betDigit >= 0 && betDigit < digitRange) {
+                            //     if (!usersPerDigit[betDigit]) {
+                            //         usersPerDigit[betDigit] = new Set();
+                            //     }
+                            //     usersPerDigit[betDigit].add(userId);
+                            //     digitCounts[betDigit].digitTotalBetPrice += betAmount;
+                            // }
+                        });
+
+                        // Update user counts per digit
+                        // for (const [digit, userSet] of Object.entries(usersPerDigit)) {
+                        //     const count = userSet.size;
+                        //     const digitIndex = parseInt(digit, 10);
+                        //     if (!isNaN(digitIndex) && digitIndex >= 0 && digitIndex < digitRange) {
+                        //         digitCounts[digitIndex].userCount = count;
+                        //     }
+                        // }
+                    }
+
+                    // Accumulate total values across bet types
+                    totalBetAmount += betTypeTotalBetAmount;
+                    totalWinningPrice += betTypeTotalWinningPrice;
+
+                    // Store individual bet type data
+                    betTypesData.push({
+                        betType,
+                        totalBetAmount: betTypeTotalBetAmount,
+                        totalWinningPrice: betTypeTotalWinningPrice,
+                        betTypeWinnigDigit
+                        // digitCounts
+                    });
+                } catch (betTypeError) {
+                    console.error(`Error processing bet type ${betType}:`, betTypeError);
+                    throw new Error(`Failed to process bet type ${betType}.`);
+                }
+            }
+
+            return res.status(200).send({
+                message: "Profit/Loss data retrieved successfully.",
+                gameId,
+                bajiId,
+                totalBetAmount, // Sum of all bet types
+                totalWinningPrice, // Sum of all bet types
+                profitOrLoss: totalBetAmount - totalWinningPrice,
+                betTypes: betTypesData, // Each bet type's individual sum
+            });
+
+        } catch (error) {
+            console.error("Error retrieving profit/loss data:", error);
+
+            let statusCode = 500;
+            let errorMessage = "Failed to retrieve profit/loss data.";
+
+            if (error.message.includes("Missing required parameters")) {
+                statusCode = 400;
+            } else if (error.message.includes("Invalid createdAt")) {
+                statusCode = 400;
+            } else if (error.message.includes("not found")) {
+                statusCode = 404;
+            } else if (error.message.includes("Failed to process bet type")) {
+                statusCode = 422; // Unprocessable Entity
+            }
+
+            return res.status(statusCode).send({ error: errorMessage });
+        }
+    });
+});
+
 
 exports.lotoprofitloss = functions.https.onRequest(async (req, res) => {
     cors(req, res, async () => {
@@ -2195,10 +2219,20 @@ exports.lotoprofitloss = functions.https.onRequest(async (req, res) => {
                 return res.status(400).send({ error: 'Date parameter is required' });
             }
 
-            const selectedDate = new Date(createdAt);
-            selectedDate.setHours(0, 0, 0, 0);
-            const nextDay = new Date(selectedDate);
-            nextDay.setDate(selectedDate.getDate() + 1);
+            // Convert createdAt to Firestore Timestamp
+            const createdAtMillis = parseInt(createdAt, 10); 
+            const createdAtDate = new Date(createdAtMillis);
+
+            // Set start boundary (Midnight: 00:00:00)
+            createdAtDate.setHours(0, 0, 0, 0);
+            const startOfDayTimestamp = admin.firestore.Timestamp.fromDate(createdAtDate);
+
+            // Set end boundary (23:59:59)
+            const endOfDayDate = new Date(createdAtMillis);
+            endOfDayDate.setHours(23, 59, 59, 999);
+            const endOfDayTimestamp = admin.firestore.Timestamp.fromDate(endOfDayDate);
+
+
 
             const snapshot = await db.collection('games')
                 .where('type', '==', 'loto')
@@ -2226,8 +2260,7 @@ exports.lotoprofitloss = functions.https.onRequest(async (req, res) => {
                 const gameHistory = gameData.gameHistory || [];
 
                 gameHistory.forEach(bet => {
-                    const betDate = bet.createdAt?.toDate();
-                    if (betDate && betDate.toDate() >= selectedDate && betDate.toDate() < nextDay) {
+                    if (bet.createdAt >= startOfDayTimestamp && bet.createdAt <= endOfDayTimestamp) {
                         const userList = bet.userList || [];
 
                         userList.forEach(userBet => {
